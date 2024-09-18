@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pose Detection with Skeleton and Movement Patterns</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #f2f2f2;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        canvas {
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .slider-container {
+            display: flex;
+            justify-content: space-around;
+            width: 80%;
+            padding: 20px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 200px;
+            height: 8px;
+            background: #ddd;
+            outline: none;
+            border-radius: 5px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        #disclaimer {
+            font-size: 14px;
+            text-align: center;
+            color: #666;
+            margin-top: 20px;
+            width: 80%;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Pose Detection with Skeleton and Movement Patterns</h1>
+
+<div id="container">
+    <canvas id="outputCanvas"></canvas>
+</div>
+
+<div class="slider-container">
+    <label for="skeletonSensitivity">Skeleton Sensitivity:</label>
+    <input type="range" id="skeletonSensitivity" min="1" max="100" value="50">
+    
+    <label for="trailDelay">Trail Delay Sensitivity:</label>
+    <input type="range" id="trailDelay" min="1" max="100" value="50">
+</div>
+
+<!-- Legal Disclaimer -->
+<p id="disclaimer">
+    <strong>Disclaimer:</strong> This application accesses your device's webcam for real-time pose detection and movement analysis. No webcam data or personal information is stored, transmitted, or shared. All processing happens locally on your device, and you may revoke camera access at any time through your browser settings. This tool is intended for informational and educational purposes only and is not a substitute for professional fitness, medical, or therapeutic advice. Use this application at your own risk. Users should consult with a qualified professional before engaging in any exercise or fitness program.
+</p>
+
+<script>
+    let detector;
+    let keypointHistory = [];
+    const historyLength = 10;
+    let skeletonSensitivity = 0.5;
+    let trailDelay = 0.5;
+
+    // Get sliders and attach event listeners
+    const sensitivitySlider = document.getElementById('skeletonSensitivity');
+    sensitivitySlider.oninput = function () {
+        skeletonSensitivity = this.value / 100;
+    };
+
+    const delaySlider = document.getElementById('trailDelay');
+    delaySlider.oninput = function () {
+        trailDelay = this.value / 100;
+    };
+
+    async function loadModel() {
+        detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+            modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+        });
+        console.log("Pose Detection model loaded");
+    }
+
+    async function startVideoAndDetectPose() {
+    const video = document.createElement('video');  // Hidden video element
+    video.style.display = 'none';  // Hide the video element
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: 'user'  // Ensures the front-facing camera is used
+            }
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        await loadModel();
+        detectPose(video);
+    } catch (err) {
+        console.error('Error accessing the webcam: ', err);
+        alert('Camera access is required for this app to function.');
+    }
+}
+
+
+    function drawSkeletonAndTrails(video, poses) {
+        const canvas = document.getElementById('outputCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height); 
+
+        // Draw the video in the background
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (poses.length > 0) {
+            const keypoints = poses[0].keypoints;
+
+            // Draw delayed movement trails
+            drawMovementTrails(ctx);
+
+            // Draw skeleton
+            drawSkeleton(ctx, keypoints);
+
+            // Store keypoints for future frames (delayed trail effect)
+            keypointHistory.push(keypoints.map(k => ({ x: k.x, y: k.y, score: k.score })));
+            if (keypointHistory.length > historyLength) keypointHistory.shift();  
+        }
+    }
+
+    function drawSkeleton(ctx, keypoints) {
+        const skeletonConnections = [
+            [5, 7], [7, 9], [6, 8], [8, 10], [5, 6],
+            [11, 12], [11, 13], [13, 15], [12, 14], [14, 16]
+        ];
+
+        ctx.strokeStyle = 'lime';
+        ctx.lineWidth = 2;
+
+        skeletonConnections.forEach(([p1, p2]) => {
+            const kp1 = keypoints[p1];
+            const kp2 = keypoints[p2];
+
+            if (kp1.score > skeletonSensitivity && kp2.score > skeletonSensitivity) {
+                ctx.beginPath();
+                ctx.moveTo(kp1.x, kp1.y);
+                ctx.lineTo(kp2.x, kp2.y);
+                ctx.stroke();
+            }
+        });
+
+        keypoints.forEach(kp => {
+            if (kp.score > skeletonSensitivity) {
+                ctx.beginPath();
+                ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+            }
+        });
+    }
+
+    function drawMovementTrails(ctx) {
+        ctx.globalAlpha = 0.5;  
+
+        keypointHistory.forEach((frame, frameIndex) => {
+            ctx.globalAlpha = (frameIndex + 1) / historyLength * trailDelay;  
+
+            frame.forEach(kp => {
+                if (kp.score > skeletonSensitivity) {
+                    ctx.beginPath();
+                    ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = 'blue';  
+                    ctx.fill();
+                }
+            });
+        });
+
+        ctx.globalAlpha = 1.0;  
+    }
+
+    async function startVideoAndDetectPose() {
+        const video = document.createElement('video');  // No need to display the video
+        video.style.display = 'none';  // Hide the video element
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        await video.play();
+
+        await loadModel();
+        detectPose(video);
+    }
+
+    startVideoAndDetectPose();
+</script>
+
+</body>
+</html>
